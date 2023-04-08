@@ -1,202 +1,105 @@
 ---
-title: Hello World
-date: "2015-05-01T22:12:03.284Z"
-description: "Hello World"
+title: Merging conflicts between cql service and cql schema
+date: "2023-04-08T14:12:03.284Z"
+description: "What to do when changing nested types"
 ---
 
-This is my first post on my new fake blog! How exciting!
 
-I'm sure I'll write a lot more interesting things in the future.
 
-You can also write code blocks here!
+# Learning from errors: Apache Cassandra 
 
-# Header 1
+## I broke the cql service with a small change
 
-## Header 2
+We all need to work on something unfamiliar as a developer, and devils are hidden in details.
 
-    Header 1
-    ========
+All I did was adding a couple of new fields in a cql type defined in cql schema, but I did not know this broke the service until customers called in to reflect the situation.
 
-    Header 2
-    --------
+## But why?
 
-# Header 1
+We can break down and understand what is a type first
 
-## Header 2
+### types
+Cassandra supports many data types. The concept is similar to SQL but of course they are different data types
 
-### Header 3
+[Cassandra Data Type](https://cassandra.apache.org/doc/latest/cassandra/cql/types.html) This is a quick introduction about Cassandra data types.
 
-#### Header 4
+### How cql service and schema work together
+The following is from chatGPT:
 
-##### Header 5
+ > In Cassandra, a schema is a collection of tables that belong to a keyspace. A keyspace is like a database in traditional SQL databases, and it is a logical grouping of tables. Each table in Cassandra is defined by a schema that specifies the table's columns and data types. When creating a table in Cassandra, you first specify the keyspace to which the table belongs. Then you define the table schema, which includes the column names and data types, as well as any primary key or secondary indexes.
 
-###### Header 6
 
-    # Header 1
-    ## Header 2
-    ### Header 3
-    #### Header 4
-    ##### Header 5
-    ###### Header 6
+### User-Defined Types (UDTs)
 
-# Header 1
+The data type I modified is a user-defined type (UDT). I followed the basic instruction and added new fields in the type it belongs to.
 
-## Header 2
+    > ALTER field_name TYPE new_cql_datatype
+        | ADD (field_name cql_datatype[,...])
 
-### Header 3
+The above example is from [DataStax Documentation](https://docs.datastax.com/en/cql-oss/3.3/cql/cql_reference/cqlAlterType.html)
 
-#### Header 4
+ChatGPT has this example:
+    >ALTER TYPE person ADD email text;
 
-##### Header 5
+### The error
+After I deployed the schema to prod, the service started to have the error: UDT type <type name> cannot be converted to another UDT type <type name>
 
-###### Header 6
+I was confused because the UDT type name was the same. After investigating, this UDT type was the higher level of the UDT type I modified.
 
-    # Header 1 #
-    ## Header 2 ##
-    ### Header 3 ###
-    #### Header 4 ####
-    ##### Header 5 #####
-    ###### Header 6 ######
 
-> Lorem ipsum dolor sit amet, consectetuer adipiscing elit. Aliquam hendrerit mi posuere lectus. Vestibulum enim wisi, viverra nec, fringilla in, laoreet vitae, risus.
+### Potential Solutions
 
-    > Lorem ipsum dolor sit amet, consectetuer adipiscing elit. Aliquam hendrerit mi posuere lectus. Vestibulum enim wisi, viverra nec, fringilla in, laoreet vitae, risus.
+One possible solution is to deploy both service and schema at the same time, but it is not ideal especially in prod environment. This error can still be thrown because we can't promise service and schema would finish deployment at the same time
 
-> ## This is a header.
->
-> 1. This is the first list item.
-> 2. This is the second list item.
->
-> Here's some example code:
->
->     Markdown.generate();
+The other solution can gracefully avoid the issue. It is again organized by chatGPT because it is a better writer in English than I am.
 
-    > ## This is a header.
-    > 1. This is the first list item.
-    > 2. This is the second list item.
-    >
-    > Here's some example code:
-    >
-    >     Markdown.generate();
+1. Create a new version of the UDT with the updated fields, keeping the original UDT intact
 
-- Red
-- Green
-- Blue
+It means doing something like this in schema (parts of the codes are from chatGPT too):
 
-* Red
-* Green
-* Blue
+    ```
+    CREATE TYPE person_v2 (<old fields and new fields>)
 
-- Red
-- Green
-- Blue
+    CREATE TYPE users_v2 (person frozen<person_v2>);
 
-```markdown
-- Red
-- Green
-- Blue
+    ``  
 
-* Red
-* Green
-* Blue
+2. Create a new table that uses the new version of UDT. 
 
-- Red
-- Green
-- Blue
-```
+In my scenario, I need to create a new higher-level UDT that uses this UDT, and make sure I update **ALL** tables that use these UDTs
 
-- `code goes` here in this line
-- **bold** goes here
+    like this:
 
-```markdown
-- `code goes` here in this line
-- **bold** goes here
-```
+    ```
+    ALTER TABLE mytable ALTER mycolumn TYPE frozen<users_v2>;
+    ``
 
-1. Buy flour and salt
-1. Mix together with water
-1. Bake
+3. Update the service code to use the **new version** of the UDT. Make sure the service can handle both the old and new versions of the UDT during the rollout period
 
-```markdown
-1. Buy flour and salt
-1. Mix together with water
-1. Bake
-```
+Then on service, we just created new objects for these newly-added items. For example:
+    
+    ```
+    @UDT(keyspace = "my_keyspace", name = "person_v2")
+        public class PersonV2 {
+        private String name;
+        private int age;
+        private String email;
+        // getters and setters
+        }
 
-1. `code goes` here in this line
-1. **bold** goes here
+     /// and users_v2   
+    ``
 
-```markdown
-1. `code goes` here in this line
-1. **bold** goes here
-```
 
-Paragraph:
+4. Migrate the data from the old table to the new table, making sure to convert the UDT values to the new version as needed. This can be done in a rolling fashion to minimize downtime
 
-    Code
+I am not sure if I actually need this step. The newly-added fields are nullable, so I just need to make sure the service can tolerate both old and new types
 
-<!-- -->
+5. Once all the data has been migrated, update the service code to use the new table only
 
-    Paragraph:
+I probably should do so and monitor it
 
-        Code
+6. If everything goes well, after a sufficient period of time, we can drop the old UDT and table in schema and monitor both to make sure it works fine
 
----
 
----
-
----
-
----
-
----
-
-    * * *
-
-    ***
-
-    *****
-
-    - - -
-
-    ---------------------------------------
-
-This is [an example](http://example.com "Example") link.
-
-[This link](http://example.com) has no title attr.
-
-This is [an example][id] reference-style link.
-
-[id]: http://example.com "Optional Title"
-
-    This is [an example](http://example.com "Example") link.
-
-    [This link](http://example.com) has no title attr.
-
-    This is [an example] [id] reference-style link.
-
-    [id]: http://example.com "Optional Title"
-
-_single asterisks_
-
-_single underscores_
-
-**double asterisks**
-
-**double underscores**
-
-    *single asterisks*
-
-    _single underscores_
-
-    **double asterisks**
-
-    __double underscores__
-
-This paragraph has some `code` in it.
-
-    This paragraph has some `code` in it.
-
-![Alt Text](https://via.placeholder.com/200x50 "Image Title")
-
-    ![Alt Text](https://via.placeholder.com/200x50 "Image Title")
+Because we needed to fix the issue as soon as possible, we just deployed the updated service that had the new UDT to prod. I did not try the graceful solution, so it might not be 100% correct. However, it is a good lesson to remind us to be more careful when updating a database service and schema.
