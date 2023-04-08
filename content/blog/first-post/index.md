@@ -1,7 +1,7 @@
 ---
 title: Merging conflicts between cql service and cql schema
 date: "2023-04-08T14:12:03.284Z"
-description: "What to do when changing nested types"
+description: "What to do when changing nested types in Cassandra db"
 ---
 
 
