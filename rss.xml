@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?><rss xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:atom="http://www.w3.org/2005/Atom" version="2.0"><channel><title><![CDATA[Gatsby Starter Blog RSS Feed]]></title><description><![CDATA[A starter blog demonstrating what Gatsby can do.]]></description><link>https://gatsbystarterblogsource.gatsbyjs.io</link><generator>GatsbyJS</generator><lastBuildDate>Wed, 03 May 2023 02:02:17 GMT</lastBuildDate><item><title><![CDATA[About this blog]]></title><description><![CDATA[I want to use this blog to post my learning experiences. I used to use LinkedIn to post some articles. [Old LinkedIn Posts] (https://www…]]></description><link>https://gatsbystarterblogsource.gatsbyjs.io/about-this-blog/</link><guid isPermaLink="false">https://gatsbystarterblogsource.gatsbyjs.io/about-this-blog/</guid><pubDate>Sat, 08 Apr 2023 14:46:37 GMT</pubDate><content:encoded>&lt;p&gt;I want to use this blog to post my learning experiences. I used to use LinkedIn to post some articles.&lt;/p&gt;
+&lt;p&gt;[Old LinkedIn Posts] (&lt;a href=&quot;https://www.linkedin.com/in/jinglanstacy/recent-activity/posts/&quot;&gt;https://www.linkedin.com/in/jinglanstacy/recent-activity/posts/&lt;/a&gt;)&lt;/p&gt;
+&lt;p&gt;It is fun to try the blog service with Gatsby, and I want to keep all the posts there in a repo. Also, it is probably a good pratice to review the MarkDown syntax.&lt;/p&gt;</content:encoded></item><item><title><![CDATA[Merging conflicts between cql service and cql schema]]></title><description><![CDATA[Learning from errors: Apache Cassandra I broke the cql service with a small change We all need to work on something unfamiliar as a…]]></description><link>https://gatsbystarterblogsource.gatsbyjs.io/first-post/</link><guid isPermaLink="false">https://gatsbystarterblogsource.gatsbyjs.io/first-post/</guid><pubDate>Sat, 08 Apr 2023 14:12:03 GMT</pubDate><content:encoded>&lt;h1&gt;Learning from errors: Apache Cassandra&lt;/h1&gt;
+&lt;h2&gt;I broke the cql service with a small change&lt;/h2&gt;
+&lt;p&gt;We all need to work on something unfamiliar as a developer, and devils are hidden in details.&lt;/p&gt;
+&lt;p&gt;All I did was adding a couple of new fields in a cql type defined in cql schema, but I did not know this broke the service until customers called in to reflect the situation.&lt;/p&gt;
+&lt;h2&gt;But why?&lt;/h2&gt;
+&lt;p&gt;We can break down and understand what is a type first&lt;/p&gt;
+&lt;h3&gt;types&lt;/h3&gt;
+&lt;p&gt;Cassandra supports many data types. The concept is similar to SQL but of course they are different data types&lt;/p&gt;
+&lt;p&gt;&lt;a href=&quot;https://cassandra.apache.org/doc/latest/cassandra/cql/types.html&quot;&gt;Cassandra Data Type&lt;/a&gt; This is a quick introduction about Cassandra data types.&lt;/p&gt;
+&lt;h3&gt;How cql service and schema work together&lt;/h3&gt;
+&lt;p&gt;The following is from chatGPT:&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;In Cassandra, a schema is a collection of tables that belong to a keyspace. A keyspace is like a database in traditional SQL databases, and it is a logical grouping of tables. Each table in Cassandra is defined by a schema that specifies the table&apos;s columns and data types. When creating a table in Cassandra, you first specify the keyspace to which the table belongs. Then you define the table schema, which includes the column names and data types, as well as any primary key or secondary indexes.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h3&gt;User-Defined Types (UDTs)&lt;/h3&gt;
+&lt;p&gt;The data type I modified is a user-defined type (UDT). I followed the basic instruction and added new fields in the type it belongs to.&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;text&quot;&gt;&lt;pre class=&quot;language-text&quot;&gt;&lt;code class=&quot;language-text&quot;&gt;&gt; ALTER field_name TYPE new_cql_datatype
+    | ADD (field_name cql_datatype[,...])&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;The above example is from &lt;a href=&quot;https://docs.datastax.com/en/cql-oss/3.3/cql/cql_reference/cqlAlterType.html&quot;&gt;DataStax Documentation&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;ChatGPT has this example:
+&gt;ALTER TYPE person ADD email text;&lt;/p&gt;
+&lt;h3&gt;The error&lt;/h3&gt;
+&lt;p&gt;After I deployed the schema to prod, the service started to have the error: UDT type &lt;type name&gt; cannot be converted to another UDT type &lt;type name&gt;&lt;/p&gt;
+&lt;p&gt;I was confused because the UDT type name was the same. After investigating, this UDT type was the higher level of the UDT type I modified.&lt;/p&gt;
+&lt;h3&gt;Potential Solutions&lt;/h3&gt;
+&lt;p&gt;One possible solution is to deploy both service and schema at the same time, but it is not ideal especially in prod environment. This error can still be thrown because we can&apos;t promise service and schema would finish deployment at the same time&lt;/p&gt;
+&lt;p&gt;The other solution can gracefully avoid the issue. It is again organized by chatGPT because it is a better writer in English than I am.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Create a new version of the UDT with the updated fields, keeping the original UDT intact&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;It means doing something like this in schema (parts of the codes are from chatGPT too):&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;text&quot;&gt;&lt;pre class=&quot;language-text&quot;&gt;&lt;code class=&quot;language-text&quot;&gt;```
+CREATE TYPE person_v2 (&amp;lt;old fields and new fields&gt;)
+
+CREATE TYPE users_v2 (person frozen&amp;lt;person_v2&gt;);
+
+``  &lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;ol start=&quot;2&quot;&gt;
+&lt;li&gt;Create a new table that uses the new version of UDT.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;In my scenario, I need to create a new higher-level UDT that uses this UDT, and make sure I update &lt;strong&gt;ALL&lt;/strong&gt; tables that use these UDTs&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;text&quot;&gt;&lt;pre class=&quot;language-text&quot;&gt;&lt;code class=&quot;language-text&quot;&gt;like this:
+
+```
+ALTER TABLE mytable ALTER mycolumn TYPE frozen&amp;lt;users_v2&gt;;
+``&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;ol start=&quot;3&quot;&gt;
+&lt;li&gt;Update the service code to use the &lt;strong&gt;new version&lt;/strong&gt; of the UDT. Make sure the service can handle both the old and new versions of the UDT during the rollout period&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Then on service, we just created new objects for these newly-added items. For example:&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;text&quot;&gt;&lt;pre class=&quot;language-text&quot;&gt;&lt;code class=&quot;language-text&quot;&gt;```
+@UDT(keyspace = &quot;my_keyspace&quot;, name = &quot;person_v2&quot;)
+    public class PersonV2 {
+    private String name;
+    private int age;
+    private String email;
+    // getters and setters
+    }
+
+ /// and users_v2   
+``&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;ol start=&quot;4&quot;&gt;
+&lt;li&gt;Migrate the data from the old table to the new table, making sure to convert the UDT values to the new version as needed. This can be done in a rolling fashion to minimize downtime&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;I am not sure if I actually need this step. The newly-added fields are nullable, so I just need to make sure the service can tolerate both old and new types&lt;/p&gt;
+&lt;ol start=&quot;5&quot;&gt;
+&lt;li&gt;Once all the data has been migrated, update the service code to use the new table only&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;I probably should do so and monitor it&lt;/p&gt;
+&lt;ol start=&quot;6&quot;&gt;
+&lt;li&gt;If everything goes well, after a sufficient period of time, we can drop the old UDT and table in schema and monitor both to make sure it works fine&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Because we needed to fix the issue as soon as possible, we just deployed the updated service that had the new UDT to prod. I did not try the graceful solution, so it might not be 100% correct. However, it is a good lesson to remind us to be more careful when updating a database service and schema.&lt;/p&gt;</content:encoded></item></channel></rss>
